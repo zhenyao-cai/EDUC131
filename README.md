@@ -1,4 +1,4 @@
-# Student Vibe
+# Codeurtool
 
 Web app for students to build HTML projects with a sandboxed live preview, version history, publishing to a public URL, and instructor-led classes with join codes. Stack: **Vite + React + TypeScript + Firebase** (Auth + Firestore).
 

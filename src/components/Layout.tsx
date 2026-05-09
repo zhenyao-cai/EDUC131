@@ -19,7 +19,7 @@ export function Layout() {
         }}
       >
         <Link to="/app" style={{ fontWeight: 700, color: "var(--text)", textDecoration: "none" }}>
-          Student Vibe
+          Codeurtool
         </Link>
         {user && (
           <div className="row" style={{ marginLeft: "auto" }}>

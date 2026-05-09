@@ -6,7 +6,7 @@ export function Landing() {
 
   return (
     <div className="page stack" style={{ maxWidth: 640 }}>
-      <h1>Student Vibe</h1>
+      <h1>Codeurtool</h1>
       <p>
         Build HTML projects, preview them safely, save version history, publish to a public link, and organize work in
         instructor-led classes with join codes.
