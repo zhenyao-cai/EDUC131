@@ -1,0 +1,123 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function authed() {
+      return request.auth != null;
+    }
+    function uid() {
+      return request.auth.uid;
+    }
+
+    function classInstructor(classId) {
+      return get(/databases/$(database)/documents/classes/$(classId)).data.instructorId;
+    }
+
+    function isInstructorOfClass(classId) {
+      return authed() && classInstructor(classId) == uid();
+    }
+
+    function isMemberOfClass(classId) {
+      return authed() &&
+        exists(/databases/$(database)/documents/classes/$(classId)/members/$(uid()));
+    }
+
+    function projectDoc(projectId) {
+      return get(/databases/$(database)/documents/projects/$(projectId)).data;
+    }
+
+    function canAccessProject(projectId) {
+      let p = projectDoc(projectId);
+      return authed() && (
+        p.ownerId == uid() ||
+        (p.classId != null && isInstructorOfClass(p.classId))
+      );
+    }
+
+    function canDeleteProject(projectId) {
+      let p = projectDoc(projectId);
+      return authed() && (
+        p.ownerId == uid() ||
+        (p.classId != null && isInstructorOfClass(p.classId))
+      );
+    }
+
+    /** publicProjects.classId must match the project (prevents hijacking another class gallery). */
+    function publicSnapshotMatchesProject(projectId) {
+      return request.resource.data.classId == projectDoc(projectId).classId;
+    }
+
+    match /users/{userId} {
+      allow read: if authed() && uid() == userId;
+      allow create: if authed() && uid() == userId
+        && request.resource.data.role in ['student', 'instructor']
+        && request.resource.data.email is string;
+      allow update: if authed() && uid() == userId
+        && request.resource.data.role == resource.data.role;
+      allow delete: if false;
+    }
+
+    match /joinLinks/{code} {
+      allow read: if authed();
+      allow create: if authed() &&
+        classInstructor(request.resource.data.classId) == uid();
+      allow update, delete: if authed() &&
+        classInstructor(resource.data.classId) == uid();
+    }
+
+    match /classes/{classId} {
+      allow read: if authed() && (resource.data.instructorId == uid() || isMemberOfClass(classId));
+      allow create: if authed() && request.resource.data.instructorId == uid();
+      allow update, delete: if authed() && resource.data.instructorId == uid();
+
+      match /members/{memberId} {
+        allow read: if authed() && (isInstructorOfClass(classId) || uid() == memberId);
+        allow create: if authed() && uid() == memberId;
+        allow delete: if authed() && (isInstructorOfClass(classId) || uid() == memberId);
+        allow update: if authed() && uid() == memberId;
+      }
+    }
+
+    match /userClasses/{userId}/items/{classId} {
+      allow read: if authed() && uid() == userId;
+      allow create: if authed() && uid() == userId && (
+        (request.resource.data.role == 'instructor' &&
+          classInstructor(classId) == uid()) ||
+        (request.resource.data.role == 'student' &&
+          exists(/databases/$(database)/documents/classes/$(classId)/members/$(uid())))
+      );
+      allow update: if authed() && uid() == userId;
+      allow delete: if authed() && (
+        uid() == userId ||
+        isInstructorOfClass(classId)
+      );
+    }
+
+    match /projects/{projectId} {
+      allow read: if authed() && (
+        resource.data.ownerId == uid() ||
+        (resource.data.classId != null && isInstructorOfClass(resource.data.classId))
+      );
+      allow create: if authed() && request.resource.data.ownerId == uid();
+      allow update: if authed() && resource.data.ownerId == uid();
+      allow delete: if canDeleteProject(projectId);
+
+      match /versions/{versionId} {
+        allow read: if authed() && canAccessProject(projectId);
+        allow create: if authed() && projectDoc(projectId).ownerId == uid();
+        allow update, delete: if authed() && canDeleteProject(projectId);
+      }
+    }
+
+    match /publicProjects/{projectId} {
+      allow get: if true;
+      allow list: if authed()
+        && resource.data.classId is string
+        && (isMemberOfClass(resource.data.classId) || isInstructorOfClass(resource.data.classId));
+      allow create, update: if authed()
+        && projectDoc(projectId).ownerId == uid()
+        && publicSnapshotMatchesProject(projectId)
+        && request.resource.data.ownerId == projectDoc(projectId).ownerId;
+      allow delete: if canDeleteProject(projectId);
+    }
+  }
+}
