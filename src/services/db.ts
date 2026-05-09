@@ -125,6 +125,30 @@ export async function joinClassWithCode(
   return { classId, className: link.className };
 }
 
+/** Student leaves a class: removes enrollment and unlinks their projects from this class (projects are kept). */
+export async function leaveClass(userId: string, classId: string) {
+  const cls = await getClass(classId);
+  if (!cls) throw new Error("Class not found.");
+  if (cls.instructorId === userId) {
+    throw new Error("Use class settings to remove a class you teach.");
+  }
+  const memberRef = doc(db(), COL.classes, classId, COL.members, userId);
+  const memberSnap = await getDoc(memberRef);
+  if (!memberSnap.exists()) throw new Error("You are not enrolled in this class.");
+
+  const projSnap = await getDocs(
+    query(collection(db(), COL.projects), where("classId", "==", classId), where("ownerId", "==", userId)),
+  );
+  for (const d of projSnap.docs) {
+    await updateProject(userId, d.id, { classId: null });
+  }
+
+  const batch = writeBatch(db());
+  batch.delete(memberRef);
+  batch.delete(doc(db(), COL.userClasses, userId, "items", classId));
+  await batch.commit();
+}
+
 export type UserClassItem = {
   id: string;
   classId: string;

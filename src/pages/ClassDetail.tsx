@@ -1,8 +1,9 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { CopyButton } from "@/components/CopyButton";
 import { HtmlPreview } from "@/components/HtmlPreview";
 import { useAuth } from "@/contexts/AuthContext";
+import { useToast } from "@/contexts/ToastContext";
 import { GRADE_OPTIONS, SUBJECT_OPTIONS } from "@/constants/taxonomy";
 import {
   countSubmittedProjectsForStudent,
@@ -12,6 +13,7 @@ import {
   isClassMember,
   listClassMembers,
   listProjectsForClass,
+  leaveClass,
   listPublishedProjectsForClass,
   type ClassPublishedProject,
 } from "@/services/db";
@@ -27,6 +29,8 @@ function uniqueSorted(values: string[]): string[] {
 export function ClassDetail() {
   const { classId } = useParams<{ classId: string }>();
   const { user } = useAuth();
+  const { toast } = useToast();
+  const nav = useNavigate();
   const [cls, setCls] = useState<Awaited<ReturnType<typeof getClass>>>(null);
   const [isInstructor, setIsInstructor] = useState(false);
   const [members, setMembers] = useState<MemberRow[]>([]);
@@ -37,6 +41,7 @@ export function ClassDetail() {
   const [filterSubject, setFilterSubject] = useState("");
   const [instructorTab, setInstructorTab] = useState<"students" | "gallery">("students");
   const [expandedStudentId, setExpandedStudentId] = useState<string | null>(null);
+  const [leaveBusy, setLeaveBusy] = useState(false);
 
   const load = useCallback(async () => {
     if (!classId || !user) return;
@@ -124,6 +129,27 @@ export function ClassDetail() {
       await load();
     } catch (ex: unknown) {
       setErr(ex instanceof Error ? ex.message : "Delete failed.");
+    }
+  }
+
+  async function onLeaveClassAsStudent() {
+    if (!classId || !user) return;
+    if (
+      !confirm(
+        "Leave this class? You will be removed from the roster. Your projects stay in your account but will no longer be linked to this class.",
+      )
+    ) {
+      return;
+    }
+    setLeaveBusy(true);
+    try {
+      await leaveClass(user.uid, classId);
+      toast("Left class.", "success");
+      nav("/app");
+    } catch (ex: unknown) {
+      toast(ex instanceof Error ? ex.message : "Could not leave class.", "error");
+    } finally {
+      setLeaveBusy(false);
     }
   }
 
@@ -340,11 +366,18 @@ export function ClassDetail() {
             </p>
           )}
         </div>
-        <Link to="/app">
-          <button type="button" className="secondary">
-            Back
-          </button>
-        </Link>
+        <div className="row" style={{ gap: "0.35rem", flexWrap: "wrap" }}>
+          {!isInstructor ? (
+            <button type="button" className="secondary" disabled={leaveBusy} onClick={() => void onLeaveClassAsStudent()}>
+              Leave class
+            </button>
+          ) : null}
+          <Link to="/app">
+            <button type="button" className="secondary">
+              Back
+            </button>
+          </Link>
+        </div>
       </div>
 
       {isInstructor ? (

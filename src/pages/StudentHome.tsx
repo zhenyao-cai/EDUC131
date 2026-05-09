@@ -6,6 +6,7 @@ import {
   createProject,
   deleteProject,
   joinClassWithCode,
+  leaveClass,
   listMyClasses,
   listMyProjects,
   unpublishProject,
@@ -23,6 +24,7 @@ export function StudentHome() {
   const [joinCode, setJoinCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [rowBusy, setRowBusy] = useState<string | null>(null);
+  const [leaveBusy, setLeaveBusy] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!user) return;
@@ -76,6 +78,27 @@ export function StudentHome() {
     }
   }
 
+  async function onLeaveClass(classId: string) {
+    if (!user) return;
+    if (
+      !confirm(
+        "Leave this class? You will be removed from the roster. Your projects stay in your account but will no longer be linked to this class.",
+      )
+    ) {
+      return;
+    }
+    setLeaveBusy(classId);
+    try {
+      await leaveClass(user.uid, classId);
+      toast("Left class.", "success");
+      await load();
+    } catch (ex: unknown) {
+      toast(ex instanceof Error ? ex.message : "Could not leave class.", "error");
+    } finally {
+      setLeaveBusy(null);
+    }
+  }
+
   async function onDeleteProject(projectId: string) {
     if (!user || !confirm("Delete this project permanently?")) return;
     setRowBusy(projectId);
@@ -117,13 +140,23 @@ export function StudentHome() {
             <p className="muted">Your classes</p>
             <ul className="stack" style={{ listStyle: "none", padding: 0, margin: 0 }}>
               {studentClasses.map((c) => (
-                <li key={c.id} className="row" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
+                <li key={c.id} className="row" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: "0.5rem" }}>
                   <span>{c.className}</span>
-                  <Link to={`/app/class/${c.id}`}>
-                    <button type="button" className="secondary">
-                      Class page &amp; gallery
+                  <div className="row" style={{ gap: "0.35rem", flexWrap: "wrap" }}>
+                    <Link to={`/app/class/${c.classId}`}>
+                      <button type="button" className="secondary">
+                        Class page &amp; gallery
+                      </button>
+                    </Link>
+                    <button
+                      type="button"
+                      className="secondary"
+                      disabled={leaveBusy === c.classId}
+                      onClick={() => void onLeaveClass(c.classId)}
+                    >
+                      Leave class
                     </button>
-                  </Link>
+                  </div>
                 </li>
               ))}
             </ul>

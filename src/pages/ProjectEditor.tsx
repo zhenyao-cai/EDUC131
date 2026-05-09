@@ -105,19 +105,24 @@ export function ProjectEditor() {
     };
   }, []);
 
+  async function persistDetails() {
+    if (!projectId || !user) throw new Error("Not signed in.");
+    await updateProject(user.uid, projectId, {
+      html,
+      toolName,
+      gradeBand,
+      subject,
+      topic,
+      description,
+      classId: classId || null,
+    });
+  }
+
   async function saveDraft() {
     if (!projectId || !user) return;
     setBusy(true);
     try {
-      await updateProject(user.uid, projectId, {
-        html,
-        toolName,
-        gradeBand,
-        subject,
-        topic,
-        description,
-        classId: classId || null,
-      });
+      await persistDetails();
       toast("Saved.", "success");
     } catch (ex: unknown) {
       toast(ex instanceof Error ? ex.message : "Save failed.", "error");
@@ -130,15 +135,7 @@ export function ProjectEditor() {
     if (!projectId || !user || isStudent) return;
     setBusy(true);
     try {
-      await updateProject(user.uid, projectId, {
-        html,
-        toolName,
-        gradeBand,
-        subject,
-        topic,
-        description,
-        classId: classId || null,
-      });
+      await persistDetails();
       await saveVersion(user.uid, projectId, html, "save");
       toast("Version saved.", "success");
       await load();
@@ -153,15 +150,7 @@ export function ProjectEditor() {
     if (!projectId || !user) return;
     setBusy(true);
     try {
-      await updateProject(user.uid, projectId, {
-        html,
-        toolName,
-        gradeBand,
-        subject,
-        topic,
-        description,
-        classId: classId || null,
-      });
+      await persistDetails();
       await publishProject(user.uid, projectId, profile?.displayName ?? user.displayName ?? "Student");
       setIsPublished(true);
       const publicUrl = `${window.location.origin}/p/${projectId}`;
@@ -207,16 +196,36 @@ export function ProjectEditor() {
     if (!projectId || !user) return;
     setBusy(true);
     try {
-      await updateProject(user.uid, projectId, {
-        html,
-        toolName,
-        gradeBand,
-        subject,
-        topic,
-        description,
-        classId: classId || null,
-      });
+      await persistDetails();
       toast("Details saved.", "success");
+    } catch (ex: unknown) {
+      toast(ex instanceof Error ? ex.message : "Save failed.", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function openHtmlEditorFromDetails() {
+    if (!projectId || !user || !toolName.trim()) return;
+    setBusy(true);
+    try {
+      await persistDetails();
+      toast("Details saved — opening editor.", "success");
+      nav(`/app/project/${projectId}/html`);
+    } catch (ex: unknown) {
+      toast(ex instanceof Error ? ex.message : "Save failed.", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function openEditorWithRestoredVersion(versionHtml: string) {
+    if (!projectId || !user) return;
+    setBusy(true);
+    try {
+      await persistDetails();
+      sessionStorage.setItem(`restoreVersion:${projectId}`, versionHtml);
+      nav(`/app/project/${projectId}/html`);
     } catch (ex: unknown) {
       toast(ex instanceof Error ? ex.message : "Save failed.", "error");
     } finally {
@@ -234,7 +243,6 @@ export function ProjectEditor() {
     );
   }
 
-  const htmlPath = `/app/project/${projectId}/html`;
   const detailsOk = toolName.trim().length > 0;
 
   if (isHtmlWorkspace) {
@@ -394,11 +402,14 @@ export function ProjectEditor() {
         <button type="button" className="secondary" disabled={busy} onClick={() => void saveDetailsOnly()}>
           Save details
         </button>
-        <Link to={htmlPath} style={{ textDecoration: "none" }}>
-          <button type="button" disabled={!detailsOk} title={!detailsOk ? "Add a project name first." : undefined}>
-            Open HTML editor (full screen)
-          </button>
-        </Link>
+        <button
+          type="button"
+          disabled={!detailsOk || busy}
+          title={!detailsOk ? "Add a project name first." : undefined}
+          onClick={() => void openHtmlEditorFromDetails()}
+        >
+          Open HTML editor (full screen)
+        </button>
         <button type="button" className="danger" disabled={busy} onClick={() => void onDelete()}>
           Delete project
         </button>
@@ -427,10 +438,8 @@ export function ProjectEditor() {
                       <button
                         type="button"
                         className="secondary"
-                        onClick={() => {
-                          sessionStorage.setItem(`restoreVersion:${projectId}`, v.html);
-                          nav(htmlPath);
-                        }}
+                        disabled={busy}
+                        onClick={() => void openEditorWithRestoredVersion(v.html)}
                       >
                         Open editor &amp; load
                       </button>
