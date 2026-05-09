@@ -8,7 +8,7 @@ import {
 } from "firebase/auth";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { getFirebaseAuth } from "@/firebase";
-import { ensureUserProfile, getUserProfile } from "@/services/db";
+import { ensureUserProfile, getUserProfile, updateUserProfileDisplayName } from "@/services/db";
 import type { UserProfile, UserRole } from "@/types/models";
 
 type AuthState = {
@@ -20,6 +20,7 @@ type AuthState = {
   signUp: (email: string, password: string, displayName: string, role: UserRole) => Promise<void>;
   logOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
+  updateDisplayName: (displayName: string) => Promise<void>;
 };
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -84,6 +85,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await signOut(auth);
   }, []);
 
+  const updateDisplayName = useCallback(async (displayName: string) => {
+    const auth = getFirebaseAuth();
+    const u = auth.currentUser;
+    if (!u) throw new Error("Not signed in.");
+    const trimmed = displayName.trim();
+    if (!trimmed) throw new Error("Name is required.");
+    if (trimmed.length > 120) throw new Error("Name is too long.");
+    await updateProfile(u, { displayName: trimmed });
+    await updateUserProfileDisplayName(u.uid, trimmed);
+    const p = await getUserProfile(u.uid);
+    setProfile(p);
+  }, []);
+
   const value = useMemo<AuthState>(
     () => ({
       user,
@@ -94,8 +108,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       signUp,
       logOut,
       refreshProfile,
+      updateDisplayName,
     }),
-    [user, profile, loading, firebaseReady, signIn, signUp, logOut, refreshProfile],
+    [user, profile, loading, firebaseReady, signIn, signUp, logOut, refreshProfile, updateDisplayName],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

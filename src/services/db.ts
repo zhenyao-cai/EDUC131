@@ -73,6 +73,11 @@ export async function getUserProfile(uid: string): Promise<UserProfile | null> {
   return snap.data() as UserProfile;
 }
 
+export async function updateUserProfileDisplayName(uid: string, displayName: string) {
+  const ref = doc(db(), COL.users, uid);
+  await updateDoc(ref, { displayName: displayName.trim() });
+}
+
 export async function createClass(instructorId: string, name: string) {
   const joinCode = randJoinCode();
   const classRef = doc(collection(db(), COL.classes));

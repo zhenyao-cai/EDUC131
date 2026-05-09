@@ -154,6 +154,28 @@ select:focus-visible {
   color: var(--muted);
 }
 
+.header-name-btn {
+  background: none;
+  border: none;
+  padding: 0.35rem 0.5rem;
+  margin: 0;
+  font: inherit;
+  font-weight: 600;
+  color: var(--accent);
+  cursor: pointer;
+  border-radius: var(--radius);
+  text-align: left;
+  max-width: min(100%, 240px);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.header-name-btn:hover {
+  color: var(--accent-dim);
+  background: var(--surface2);
+  text-decoration: underline;
+}
+
 .grade-pill-row {
   display: flex;
   flex-wrap: wrap;
