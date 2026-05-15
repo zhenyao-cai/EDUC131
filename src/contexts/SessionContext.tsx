@@ -1,7 +1,8 @@
-import { onAuthStateChanged, signInAnonymously, type User } from "firebase/auth";
+import { onAuthStateChanged, type User } from "firebase/auth";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { getFirebaseAuth } from "@/firebase";
 import { ensureStudentInClass, isMemberRemoved, logActivity, updateStudentDisplayName } from "@/services/db";
+import { ensureAnonymousAuth } from "@/services/firebaseAuthBootstrap";
 import { clearLocalUserStorage, DISPLAY_NAME_KEY, resetToNewAnonymousSession } from "@/services/sessionReset";
 
 function readStoredName(): string {
@@ -17,11 +18,13 @@ type SessionState = {
   displayName: string;
   hasJoined: boolean;
   loading: boolean;
+  authError: string | null;
   joining: boolean;
   updatingName: boolean;
   firebaseReady: boolean;
   completeJoin: (name: string) => Promise<void>;
   updateDisplayName: (name: string) => Promise<void>;
+  retryAuth: () => void;
 };
 
 const SessionContext = createContext<SessionState | null>(null);
@@ -31,54 +34,73 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [displayName, setDisplayName] = useState(readStoredName);
   const [hasJoined, setHasJoined] = useState(hasJoinedBefore);
   const [loading, setLoading] = useState(true);
+  const [authError, setAuthError] = useState<string | null>(null);
   const [joining, setJoining] = useState(false);
   const [updatingName, setUpdatingName] = useState(false);
   const [firebaseReady, setFirebaseReady] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+
+  const retryAuth = useCallback(() => {
+    setAuthError(null);
+    setLoading(true);
+    setAttempt((n) => n + 1);
+  }, []);
 
   useEffect(() => {
+    let cancelled = false;
     let unsub: (() => void) | undefined;
-    try {
-      const auth = getFirebaseAuth();
-      setFirebaseReady(true);
-      unsub = onAuthStateChanged(auth, async (u) => {
-        if (u) {
-          if (await isMemberRemoved(u.uid)) {
-            clearLocalUserStorage(u.uid);
-            setDisplayName("");
-            setHasJoined(false);
-            setUser(null);
-            await resetToNewAnonymousSession();
-            return;
-          }
 
-          const name = readStoredName();
-          setUser(u);
-          setDisplayName(name);
-          setHasJoined(name.length > 0);
+    const bootstrap = async () => {
+      try {
+        const auth = getFirebaseAuth();
+        setFirebaseReady(true);
+        const u = await ensureAnonymousAuth(auth);
+        if (cancelled) return;
 
-          if (name.length > 0) {
-            try {
-              await ensureStudentInClass(u.uid, name);
-            } catch {
-              /* class doc may be missing */
-            }
-          }
-        } else {
-          try {
-            await signInAnonymously(auth);
-          } catch {
-            setLoading(false);
-          }
+        if (await isMemberRemoved(u.uid)) {
+          clearLocalUserStorage(u.uid);
+          setDisplayName("");
+          setHasJoined(false);
+          await resetToNewAnonymousSession();
+          if (!cancelled) setAttempt((n) => n + 1);
           return;
         }
-        setLoading(false);
-      });
-    } catch {
-      setFirebaseReady(false);
-      setLoading(false);
-    }
-    return () => unsub?.();
-  }, []);
+
+        const name = readStoredName();
+        setUser(u);
+        setDisplayName(name);
+        setHasJoined(name.length > 0);
+        setAuthError(null);
+
+        if (name.length > 0) {
+          try {
+            await ensureStudentInClass(u.uid, name);
+          } catch (ex: unknown) {
+            setAuthError(ex instanceof Error ? ex.message : "Could not sync your profile to the class.");
+          }
+        }
+
+        unsub = onAuthStateChanged(auth, (next) => {
+          if (next && next.uid !== u.uid) {
+            setUser(next);
+          }
+        });
+      } catch (ex: unknown) {
+        if (!cancelled) {
+          setUser(null);
+          setAuthError(ex instanceof Error ? ex.message : "Could not connect to Firebase.");
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    void bootstrap();
+    return () => {
+      cancelled = true;
+      unsub?.();
+    };
+  }, [attempt]);
 
   const completeJoin = useCallback(
     async (name: string) => {
@@ -94,11 +116,16 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         setHasJoined(true);
         await updateStudentDisplayName(user.uid, trimmed);
         await ensureStudentInClass(user.uid, trimmed);
+        setAuthError(null);
         await logActivity({
           userId: user.uid,
           displayName: trimmed,
           type: "visit",
         });
+      } catch (ex: unknown) {
+        const message = ex instanceof Error ? ex.message : "Could not save your name to the class.";
+        setAuthError(message);
+        throw new Error(message);
       } finally {
         setJoining(false);
       }
@@ -120,6 +147,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         setDisplayName(trimmed);
         await updateStudentDisplayName(user.uid, trimmed);
         await ensureStudentInClass(user.uid, trimmed);
+        setAuthError(null);
       } finally {
         setUpdatingName(false);
       }
@@ -133,13 +161,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       displayName,
       hasJoined,
       loading,
+      authError,
       joining,
       updatingName,
       firebaseReady,
       completeJoin,
       updateDisplayName,
+      retryAuth,
     }),
-    [user, displayName, hasJoined, loading, joining, updatingName, firebaseReady, completeJoin, updateDisplayName],
+    [user, displayName, hasJoined, loading, authError, joining, updatingName, firebaseReady, completeJoin, updateDisplayName, retryAuth],
   );
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;

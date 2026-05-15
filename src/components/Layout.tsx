@@ -4,7 +4,7 @@ import { WelcomeJoin } from "@/components/WelcomeJoin";
 import { useLogVisit, useSession } from "@/contexts/SessionContext";
 
 export function Layout() {
-  const { user, hasJoined, loading, firebaseReady } = useSession();
+  const { user, hasJoined, loading, authError, firebaseReady, retryAuth } = useSession();
 
   useLogVisit();
 
@@ -19,7 +19,22 @@ export function Layout() {
   if (loading) {
     return (
       <div className="page">
-        <p className="muted">Loading…</p>
+        <p className="muted">Connecting to Firebase…</p>
+      </div>
+    );
+  }
+
+  if (authError && !user) {
+    return (
+      <div className="page stack">
+        <h1>Connection problem</h1>
+        <p className="muted">{authError}</p>
+        <p className="muted" style={{ fontSize: "0.9rem" }}>
+          Try a normal browser tab (not private). Add your site to Firebase → Authentication → Authorized domains.
+        </p>
+        <button type="button" onClick={retryAuth}>
+          Try again
+        </button>
       </div>
     );
   }

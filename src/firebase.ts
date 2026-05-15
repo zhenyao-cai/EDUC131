@@ -1,5 +1,12 @@
 import { initializeApp, type FirebaseApp } from "firebase/app";
-import { getAuth, type Auth } from "firebase/auth";
+import {
+  browserLocalPersistence,
+  browserSessionPersistence,
+  getAuth,
+  indexedDBLocalPersistence,
+  initializeAuth,
+  type Auth,
+} from "firebase/auth";
 import { getFirestore, type Firestore } from "firebase/firestore";
 
 function readEnv(key: keyof ImportMetaEnv): string {
@@ -33,7 +40,16 @@ export function getFirebaseApp(): FirebaseApp {
 }
 
 export function getFirebaseAuth(): Auth {
-  if (!auth) auth = getAuth(getFirebaseApp());
+  if (!auth) {
+    const firebaseApp = getFirebaseApp();
+    try {
+      auth = initializeAuth(firebaseApp, {
+        persistence: [indexedDBLocalPersistence, browserLocalPersistence, browserSessionPersistence],
+      });
+    } catch {
+      auth = getAuth(firebaseApp);
+    }
+  }
   return auth;
 }
 

@@ -31,7 +31,7 @@ const ACTIVITY_LABELS: Record<ActivityDoc["type"], string> = {
 export function InstructorDashboard() {
   const [searchParams] = useSearchParams();
   const { toast } = useToast();
-  const { user, loading: sessionLoading, firebaseReady } = useInstructorAuth();
+  const { user, loading: sessionLoading, authError, firebaseReady, retryAuth } = useInstructorAuth();
   const key = searchParams.get("key");
   const allowed = isInstructorAccess(key);
 
@@ -181,8 +181,23 @@ export function InstructorDashboard() {
         </div>
       </div>
 
-      {sessionLoading || !user ? (
-        <p className="muted">Connecting to Firebase…</p>
+      {sessionLoading ? <p className="muted">Connecting to Firebase…</p> : null}
+
+      {!sessionLoading && authError ? (
+        <div className="card stack" style={{ borderColor: "var(--danger, #c62828)" }}>
+          <p style={{ margin: 0 }}>{authError}</p>
+          <p className="muted" style={{ margin: 0, fontSize: "0.9rem" }}>
+            On mobile: avoid private/incognito mode. In Firebase Console → Authentication → Settings → Authorized
+            domains, add your Netlify URL (e.g. <code>your-site.netlify.app</code>).
+          </p>
+          <button type="button" onClick={retryAuth}>
+            Try again
+          </button>
+        </div>
+      ) : null}
+
+      {!sessionLoading && !authError && !user ? (
+        <p className="muted">Not signed in. Tap Try again or refresh the page.</p>
       ) : null}
 
       {loadError ? (
