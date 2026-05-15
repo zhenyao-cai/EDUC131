@@ -87,3 +87,7 @@ export function deleteLocalProject(ownerId: string, projectId: string): void {
   const all = readAll(ownerId).filter((p) => p.id !== projectId);
   writeAll(ownerId, all);
 }
+
+export function clearLocalProjectsForUser(ownerId: string): void {
+  localStorage.removeItem(storageKey(ownerId));
+}

@@ -7,6 +7,9 @@ export type ClassMember = {
   userId: string;
   displayName: string;
   joinedAt: number;
+  lastSeenAt: number;
+  /** Set when instructor removes this visitor; they get a new anonymous id on next visit. */
+  removedAt?: number | null;
 };
 
 export type ActivityType =

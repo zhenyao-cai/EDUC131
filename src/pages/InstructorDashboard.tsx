@@ -1,12 +1,14 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { CLASS_NAME, INSTRUCTOR_KEY, isInstructorAccess } from "@/constants/site";
-import { useSession } from "@/contexts/SessionContext";
+import { useInstructorAuth } from "@/contexts/InstructorAuthContext";
 import { useToast } from "@/contexts/ToastContext";
 import {
   ensureDefaultClass,
   getClass,
+  getRemovedMemberIds,
   instructorDeleteProject,
+  instructorRemoveMember,
   listActivities,
   listClassMembers,
   listProjectsForClass,
@@ -29,7 +31,7 @@ const ACTIVITY_LABELS: Record<ActivityDoc["type"], string> = {
 export function InstructorDashboard() {
   const [searchParams] = useSearchParams();
   const { toast } = useToast();
-  const { user, loading: sessionLoading, firebaseReady } = useSession();
+  const { user, loading: sessionLoading, firebaseReady } = useInstructorAuth();
   const key = searchParams.get("key");
   const allowed = isInstructorAccess(key);
 
@@ -55,8 +57,8 @@ export function InstructorDashboard() {
       setProjects(ps as ProjectRow[]);
 
       try {
-        const acts = await listActivities();
-        setActivities(acts as ActivityRow[]);
+        const [acts, removed] = await Promise.all([listActivities(), getRemovedMemberIds()]);
+        setActivities((acts as ActivityRow[]).filter((a) => !removed.has(a.userId)));
         setLoadError(null);
       } catch (ex: unknown) {
         const message = ex instanceof Error ? ex.message : "Could not load activity.";
@@ -101,6 +103,27 @@ export function InstructorDashboard() {
     }
   }
 
+  async function removeMember(userId: string, name: string) {
+    if (
+      !confirm(
+        `Remove "${name}" from the class?\n\nTheir gallery work will be hidden. If they open the site again on the same browser, they will start fresh as a new visitor.`,
+      )
+    ) {
+      return;
+    }
+    setBusy(true);
+    try {
+      await instructorRemoveMember(userId);
+      toast("Visitor removed.", "success");
+      setExpandedStudentId(null);
+      await load();
+    } catch (ex: unknown) {
+      toast(ex instanceof Error ? ex.message : "Remove failed.", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (!firebaseReady) {
     return (
       <div className="page stack">
@@ -138,7 +161,7 @@ export function InstructorDashboard() {
         <div>
           <h1 style={{ margin: 0 }}>Instructor — {className}</h1>
           <p className="muted" style={{ margin: "0.35rem 0 0" }}>
-            Activity and projects for everyone using this site.
+            Class-wide view from the cloud — all students who entered a name on any device.
           </p>
         </div>
         <div className="row" style={{ gap: "0.5rem", flexWrap: "wrap" }}>
@@ -233,15 +256,19 @@ export function InstructorDashboard() {
       {tab === "students" && (
         <section className="card stack">
           <h2 style={{ marginTop: 0 }}>Students</h2>
+          <p className="muted" style={{ margin: 0 }}>
+            Only students who chose a name appear here. Each browser is one student; this list is the same on every device you use as instructor.
+          </p>
           {members.length === 0 ? (
-            <p className="muted">No visitors yet.</p>
+            <p className="muted">No students yet. They must open the site and enter a name.</p>
           ) : (
             <table>
               <thead>
                 <tr>
                   <th>Name</th>
                   <th>Projects</th>
-                  <th>Joined</th>
+                  <th>Last seen</th>
+                  <th />
                 </tr>
               </thead>
               <tbody>
@@ -254,11 +281,16 @@ export function InstructorDashboard() {
                         </button>
                       </td>
                       <td>{projectsForStudent(m.userId).length}</td>
-                      <td>{new Date(m.joinedAt).toLocaleString()}</td>
+                      <td>{new Date(m.lastSeenAt ?? m.joinedAt).toLocaleString()}</td>
+                      <td>
+                        <button type="button" className="danger" disabled={busy} onClick={() => void removeMember(m.userId, m.displayName)}>
+                          Remove
+                        </button>
+                      </td>
                     </tr>
                     {expandedStudentId === m.userId ? (
                       <tr>
-                        <td colSpan={3} className="student-projects-panel">
+                        <td colSpan={4} className="student-projects-panel">
                           {projectsForStudent(m.userId).length === 0 ? (
                             <p className="muted">No projects yet.</p>
                           ) : (

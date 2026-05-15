@@ -1,12 +1,11 @@
 import { onAuthStateChanged, signInAnonymously, type User } from "firebase/auth";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { getFirebaseAuth } from "@/firebase";
-import { ensureStudentInClass, logActivity, updateStudentDisplayName } from "@/services/db";
-
-const NAME_KEY = "codeurtool_display_name";
+import { ensureStudentInClass, isMemberRemoved, logActivity, updateStudentDisplayName } from "@/services/db";
+import { clearLocalUserStorage, DISPLAY_NAME_KEY, resetToNewAnonymousSession } from "@/services/sessionReset";
 
 function readStoredName(): string {
-  return localStorage.getItem(NAME_KEY)?.trim() ?? "";
+  return localStorage.getItem(DISPLAY_NAME_KEY)?.trim() ?? "";
 }
 
 function hasJoinedBefore(): boolean {
@@ -43,10 +42,20 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       setFirebaseReady(true);
       unsub = onAuthStateChanged(auth, async (u) => {
         if (u) {
-          setUser(u);
+          if (await isMemberRemoved(u.uid)) {
+            clearLocalUserStorage(u.uid);
+            setDisplayName("");
+            setHasJoined(false);
+            setUser(null);
+            await resetToNewAnonymousSession();
+            return;
+          }
+
           const name = readStoredName();
+          setUser(u);
           setDisplayName(name);
           setHasJoined(name.length > 0);
+
           if (name.length > 0) {
             try {
               await ensureStudentInClass(u.uid, name);
@@ -80,7 +89,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
       setJoining(true);
       try {
-        localStorage.setItem(NAME_KEY, trimmed);
+        localStorage.setItem(DISPLAY_NAME_KEY, trimmed);
         setDisplayName(trimmed);
         setHasJoined(true);
         await updateStudentDisplayName(user.uid, trimmed);
@@ -107,7 +116,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
       setUpdatingName(true);
       try {
-        localStorage.setItem(NAME_KEY, trimmed);
+        localStorage.setItem(DISPLAY_NAME_KEY, trimmed);
         setDisplayName(trimmed);
         await updateStudentDisplayName(user.uid, trimmed);
         await ensureStudentInClass(user.uid, trimmed);
