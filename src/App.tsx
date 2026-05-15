@@ -1,38 +1,37 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { Layout } from "@/components/Layout";
-import { AuthProvider } from "@/contexts/AuthContext";
+import { SessionProvider } from "@/contexts/SessionContext";
 import { ToastProvider } from "@/contexts/ToastContext";
-import { AppHome } from "@/pages/AppHome";
-import { ClassDetail } from "@/pages/ClassDetail";
+import { ClassGallery } from "@/pages/ClassGallery";
+import { InstructorDashboard } from "@/pages/InstructorDashboard";
 import { Landing } from "@/pages/Landing";
-import { Login } from "@/pages/Login";
 import { ProjectEditor } from "@/pages/ProjectEditor";
 import { PublicProject } from "@/pages/PublicProject";
-import { Register } from "@/pages/Register";
+import { StudentWorkspace } from "@/pages/StudentWorkspace";
 
 export default function App() {
   return (
     <BrowserRouter>
-      <AuthProvider>
+      <SessionProvider>
         <ToastProvider>
-        <Routes>
-          {/* Standalone: published site fills the window (no app chrome). */}
-          <Route path="/p/:projectId" element={<PublicProject />} />
-          {/* Full-screen HTML workspace (no app chrome). */}
-          <Route path="/app/project/:projectId/html" element={<ProjectEditor />} />
+          <Routes>
+            <Route path="/p/:projectId" element={<PublicProject />} />
+            <Route path="/app/project/:projectId/html" element={<ProjectEditor />} />
+            <Route path="/instructor" element={<InstructorDashboard />} />
 
-          <Route element={<Layout />}>
-            <Route path="/" element={<Landing />} />
-            <Route path="/login" element={<Login />} />
-            <Route path="/register" element={<Register />} />
-            <Route path="/app" element={<AppHome />} />
-            <Route path="/app/class/:classId" element={<ClassDetail />} />
-            <Route path="/app/project/:projectId" element={<ProjectEditor />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Route>
-        </Routes>
+            <Route element={<Layout />}>
+              <Route path="/" element={<Landing />} />
+              <Route path="/app" element={<StudentWorkspace />} />
+              <Route path="/app/gallery" element={<ClassGallery />} />
+              <Route path="/app/project/:projectId" element={<ProjectEditor />} />
+              <Route path="/login" element={<Navigate to="/app" replace />} />
+              <Route path="/register" element={<Navigate to="/app" replace />} />
+              <Route path="/app/class/:classId" element={<Navigate to="/app/gallery" replace />} />
+              <Route path="*" element={<Navigate to="/app" replace />} />
+            </Route>
+          </Routes>
         </ToastProvider>
-      </AuthProvider>
+      </SessionProvider>
     </BrowserRouter>
   );
 }

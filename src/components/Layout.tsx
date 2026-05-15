@@ -1,31 +1,31 @@
-import { useState } from "react";
-import { Link, Outlet } from "react-router-dom";
-import { useAuth } from "@/contexts/AuthContext";
-import { useToast } from "@/contexts/ToastContext";
+import { Link, NavLink, Outlet } from "react-router-dom";
+import { HeaderDisplayName } from "@/components/HeaderDisplayName";
+import { WelcomeJoin } from "@/components/WelcomeJoin";
+import { useLogVisit, useSession } from "@/contexts/SessionContext";
 
 export function Layout() {
-  const { user, profile, logOut, updateDisplayName } = useAuth();
-  const { toast } = useToast();
-  const [editingName, setEditingName] = useState(false);
-  const [nameDraft, setNameDraft] = useState("");
-  const [savingName, setSavingName] = useState(false);
+  const { user, hasJoined, loading, firebaseReady } = useSession();
 
-  async function saveDisplayName() {
-    setSavingName(true);
-    try {
-      await updateDisplayName(nameDraft);
-      setEditingName(false);
-      toast("Name updated.", "success");
-    } catch (ex: unknown) {
-      toast(ex instanceof Error ? ex.message : "Could not update name.", "error");
-    } finally {
-      setSavingName(false);
-    }
+  useLogVisit();
+
+  if (!firebaseReady) {
+    return (
+      <div className="page">
+        <p className="muted">Configure Firebase in .env to use the app.</p>
+      </div>
+    );
   }
 
-  function cancelEditName() {
-    setEditingName(false);
-    setNameDraft(profile?.displayName ?? "");
+  if (loading) {
+    return (
+      <div className="page">
+        <p className="muted">Loading…</p>
+      </div>
+    );
+  }
+
+  if (user && !hasJoined) {
+    return <WelcomeJoin />;
   }
 
   return (
@@ -42,60 +42,25 @@ export function Layout() {
           flexWrap: "wrap",
         }}
       >
-        <Link to="/app" style={{ fontWeight: 700, color: "var(--text)", textDecoration: "none" }}>
-          Codeurtool
-        </Link>
-        {user && (
-          <div className="row" style={{ marginLeft: "auto", alignItems: "center", flexWrap: "wrap", gap: "0.5rem" }}>
-            {editingName ? (
-              <>
-                <input
-                  type="text"
-                  value={nameDraft}
-                  onChange={(e) => setNameDraft(e.target.value)}
-                  maxLength={120}
-                  autoFocus
-                  disabled={savingName}
-                  aria-label="Display name"
-                  style={{ minWidth: "10rem", maxWidth: "16rem" }}
-                />
-                <button type="button" disabled={savingName || !nameDraft.trim()} onClick={() => void saveDisplayName()}>
-                  Save
-                </button>
-                <button type="button" className="secondary" disabled={savingName} onClick={cancelEditName}>
-                  Cancel
-                </button>
-              </>
-            ) : (
-              <>
-                {profile ? (
-                  <button
-                    type="button"
-                    className="header-name-btn"
-                    title="Click to change your name"
-                    onClick={() => {
-                      setNameDraft(profile.displayName);
-                      setEditingName(true);
-                    }}
-                  >
-                    {profile.displayName}
-                  </button>
-                ) : (
-                  <span className="header-user-name">{user.email}</span>
-                )}
-                {profile ? <span className="header-user-role">({profile.role})</span> : null}
-              </>
-            )}
-            <Link to="/app" className="header-user-link" title="Go to workspace">
-              <span className="muted" style={{ fontSize: "0.85rem" }}>
-                Workspace
-              </span>
-            </Link>
-            <button type="button" className="secondary" onClick={() => void logOut()}>
-              Sign out
-            </button>
+        <div className="row" style={{ alignItems: "center", gap: "0.75rem", flexWrap: "wrap" }}>
+          <Link to="/app" style={{ fontWeight: 700, color: "var(--text)", textDecoration: "none" }}>
+            Codeurtool
+          </Link>
+          <nav className="app-nav" aria-label="Main">
+            <NavLink to="/app" end className={({ isActive }) => `app-nav-link${isActive ? " is-active" : ""}`}>
+              My projects
+            </NavLink>
+            <NavLink to="/app/gallery" className={({ isActive }) => `app-nav-link app-nav-gallery${isActive ? " is-active" : ""}`}>
+              Gallery
+            </NavLink>
+          </nav>
+        </div>
+
+        {user && hasJoined ? (
+          <div style={{ marginLeft: "auto" }}>
+            <HeaderDisplayName />
           </div>
-        )}
+        ) : null}
       </header>
       <main style={{ flex: 1 }}>
         <Outlet />

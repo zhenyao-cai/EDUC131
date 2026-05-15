@@ -1,32 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { HtmlPreview } from "@/components/HtmlPreview";
-import { useAuth } from "@/contexts/AuthContext";
+import { useSession } from "@/contexts/SessionContext";
+import { WelcomeJoin } from "@/components/WelcomeJoin";
 import { useToast } from "@/contexts/ToastContext";
 import { GRADE_OPTIONS, SUBJECT_OPTIONS, isPresetSubject } from "@/constants/taxonomy";
-import {
-  deleteProject,
-  getProject,
-  listMyClasses,
-  listVersions,
-  publishProject,
-  saveVersion,
-  unpublishProject,
-  updateProject,
-  type UserClassItem,
-} from "@/services/db";
-import type { ProjectVersionDoc } from "@/types/models";
+import { deleteProject, getProject, publishProject, unpublishProject, updateProject } from "@/services/db";
 
 export function ProjectEditor() {
   const { projectId } = useParams<{ projectId: string }>();
   const { pathname } = useLocation();
   const isHtmlWorkspace = pathname.endsWith("/html");
-  const { user, profile, loading: authLoading } = useAuth();
+  const { user, displayName, hasJoined, loading: sessionLoading } = useSession();
   const { toast } = useToast();
   const nav = useNavigate();
-
-  const isStudent = profile?.role === "student";
-  const showVersionHistory = Boolean(profile && profile.role !== "student");
 
   const [toolName, setToolName] = useState("");
   const [gradeBand, setGradeBand] = useState("");
@@ -34,10 +21,7 @@ export function ProjectEditor() {
   const [topic, setTopic] = useState("");
   const [description, setDescription] = useState("");
   const [html, setHtml] = useState("");
-  const [classId, setClassId] = useState<string | null>(null);
   const [isPublished, setIsPublished] = useState(false);
-  const [classes, setClasses] = useState<UserClassItem[]>([]);
-  const [versions, setVersions] = useState<Array<{ id: string } & ProjectVersionDoc>>([]);
   const [busy, setBusy] = useState(false);
 
   const [codePct, setCodePct] = useState(52);
@@ -46,8 +30,8 @@ export function ProjectEditor() {
 
   const load = useCallback(async () => {
     if (!projectId || !user) return;
-    const p = await getProject(projectId);
-    if (!p || p.ownerId !== user.uid) {
+    const p = getProject(user.uid, projectId);
+    if (!p) {
       nav("/app", { replace: true });
       return;
     }
@@ -57,16 +41,7 @@ export function ProjectEditor() {
     setTopic(p.topic);
     setDescription(p.description);
     setHtml(p.html);
-    setClassId(p.classId);
     setIsPublished(p.isPublished);
-    const cs = await listMyClasses(user.uid);
-    setClasses(cs.filter((c) => c.role === "student"));
-    if (showVersionHistory) {
-      const vs = await listVersions(projectId, user.uid);
-      setVersions(vs as Array<{ id: string } & ProjectVersionDoc>);
-    } else {
-      setVersions([]);
-    }
     const restoreKey = `restoreVersion:${projectId}`;
     const restored = sessionStorage.getItem(restoreKey);
     if (restored) {
@@ -74,18 +49,11 @@ export function ProjectEditor() {
       sessionStorage.removeItem(restoreKey);
       toast("Restored version into the editor — Save to keep.", "info");
     }
-  }, [projectId, user, nav, showVersionHistory, toast]);
+  }, [projectId, user, nav, toast]);
 
   useEffect(() => {
     void load();
   }, [load]);
-
-  useEffect(() => {
-    if (authLoading) return;
-    if (!user && projectId) {
-      nav("/login", { replace: true });
-    }
-  }, [authLoading, user, projectId, nav]);
 
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
@@ -105,17 +73,15 @@ export function ProjectEditor() {
     };
   }, []);
 
-  async function persistDetails() {
-    if (!projectId || !user) throw new Error("Not signed in.");
-    await updateProject(user.uid, projectId, {
-      html,
-      toolName,
-      gradeBand,
-      subject,
-      topic,
-      description,
-      classId: classId || null,
-    });
+  async function persistDetails(activityType: "project_saved" | "editor_opened" = "project_saved") {
+    if (!projectId || !user) throw new Error("Not ready.");
+    await updateProject(
+      user.uid,
+      projectId,
+      displayName,
+      { html, toolName, gradeBand, subject, topic, description },
+      activityType,
+    );
   }
 
   async function saveDraft() {
@@ -131,27 +97,12 @@ export function ProjectEditor() {
     }
   }
 
-  async function snapshotVersion() {
-    if (!projectId || !user || isStudent) return;
-    setBusy(true);
-    try {
-      await persistDetails();
-      await saveVersion(user.uid, projectId, html, "save");
-      toast("Version saved.", "success");
-      await load();
-    } catch (ex: unknown) {
-      toast(ex instanceof Error ? ex.message : "Version save failed.", "error");
-    } finally {
-      setBusy(false);
-    }
-  }
-
   async function onPublish() {
     if (!projectId || !user) return;
     setBusy(true);
     try {
       await persistDetails();
-      await publishProject(user.uid, projectId, profile?.displayName ?? user.displayName ?? "Student");
+      await publishProject(user.uid, projectId, displayName);
       setIsPublished(true);
       const publicUrl = `${window.location.origin}/p/${projectId}`;
       toast(`Published. Public URL: ${publicUrl}`, "success");
@@ -167,7 +118,7 @@ export function ProjectEditor() {
     if (!projectId || !user) return;
     setBusy(true);
     try {
-      await unpublishProject(user.uid, projectId);
+      await unpublishProject(user.uid, projectId, displayName);
       setIsPublished(false);
       toast("Unpublished.", "success");
       await load();
@@ -183,7 +134,7 @@ export function ProjectEditor() {
     if (!confirm("Delete this project and all versions?")) return;
     setBusy(true);
     try {
-      await deleteProject(user.uid, projectId);
+      await deleteProject(user.uid, projectId, displayName);
       nav("/app", { replace: true });
     } catch (ex: unknown) {
       toast(ex instanceof Error ? ex.message : "Delete failed.", "error");
@@ -209,7 +160,7 @@ export function ProjectEditor() {
     if (!projectId || !user || !toolName.trim()) return;
     setBusy(true);
     try {
-      await persistDetails();
+      await persistDetails("editor_opened");
       toast("Details saved — opening editor.", "success");
       nav(`/app/project/${projectId}/html`);
     } catch (ex: unknown) {
@@ -219,21 +170,7 @@ export function ProjectEditor() {
     }
   }
 
-  async function openEditorWithRestoredVersion(versionHtml: string) {
-    if (!projectId || !user) return;
-    setBusy(true);
-    try {
-      await persistDetails();
-      sessionStorage.setItem(`restoreVersion:${projectId}`, versionHtml);
-      nav(`/app/project/${projectId}/html`);
-    } catch (ex: unknown) {
-      toast(ex instanceof Error ? ex.message : "Save failed.", "error");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  if (!projectId || authLoading || !user) {
+  if (!projectId || sessionLoading || !user) {
     return (
       <div className={isHtmlWorkspace ? "project-html-shell" : "page"}>
         <p className="muted" style={{ padding: "1rem" }}>
@@ -241,6 +178,10 @@ export function ProjectEditor() {
         </p>
       </div>
     );
+  }
+
+  if (!hasJoined) {
+    return <WelcomeJoin />;
   }
 
   const detailsOk = toolName.trim().length > 0;
@@ -267,11 +208,6 @@ export function ProjectEditor() {
           <button type="button" className="secondary" disabled={busy} onClick={() => void saveDraft()}>
             Save
           </button>
-          {!isStudent && (
-            <button type="button" className="secondary" disabled={busy} onClick={() => void snapshotVersion()}>
-              Save version
-            </button>
-          )}
           {!isPublished ? (
             <button type="button" disabled={busy} onClick={() => void onPublish()}>
               Publish
@@ -376,26 +312,6 @@ export function ProjectEditor() {
           <span className="muted">Description</span>
           <textarea rows={3} value={description} onChange={(e) => setDescription(e.target.value)} />
         </label>
-        <label className="stack">
-          <span className="muted">Class (submission)</span>
-          <select
-            value={classId ?? ""}
-            onChange={(e) => setClassId(e.target.value || null)}
-            disabled={classes.length === 0}
-          >
-            <option value="">Not linked to a class</option>
-            {classes.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.className}
-              </option>
-            ))}
-          </select>
-        </label>
-        {classes.length === 0 && (
-          <p className="muted" style={{ margin: 0 }}>
-            Join a class from your student dashboard to link this project for your instructor.
-          </p>
-        )}
       </div>
 
       <div className="row" style={{ flexWrap: "wrap", gap: "0.75rem" }}>
@@ -415,42 +331,6 @@ export function ProjectEditor() {
         </button>
       </div>
 
-      {showVersionHistory && (
-        <section className="card stack">
-          <h2>Version history</h2>
-          {versions.length === 0 ? (
-            <p className="muted">No saved versions yet. Use the HTML editor → Save version.</p>
-          ) : (
-            <table>
-              <thead>
-                <tr>
-                  <th>When</th>
-                  <th>Label</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {versions.map((v) => (
-                  <tr key={v.id}>
-                    <td>{new Date(v.createdAt).toLocaleString()}</td>
-                    <td>{v.label}</td>
-                    <td>
-                      <button
-                        type="button"
-                        className="secondary"
-                        disabled={busy}
-                        onClick={() => void openEditorWithRestoredVersion(v.html)}
-                      >
-                        Open editor &amp; load
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </section>
-      )}
     </div>
   );
 }

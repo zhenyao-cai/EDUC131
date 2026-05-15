@@ -1,370 +1,182 @@
 import {
   addDoc,
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
-  limit,
   orderBy,
   query,
-  runTransaction,
   setDoc,
   updateDoc,
   where,
-  writeBatch,
-  type DocumentData,
-  type Firestore,
 } from "firebase/firestore";
 import { getDb } from "@/firebase";
-import type {
-  ClassDoc,
-  ClassMember,
-  JoinLinkDoc,
-  ProjectDoc,
-  ProjectVersionDoc,
-  UserProfile,
-  UserRole,
-} from "@/types/models";
+import { CLASS_ID, CLASS_NAME } from "@/constants/site";
+import {
+  createLocalProject,
+  deleteLocalProject,
+  getLocalProject,
+  listLocalProjects,
+  updateLocalProject,
+  type LocalProject,
+} from "@/services/localProjects";
+import type { ActivityDoc, ActivityType, ClassDoc, ClassMember, ProjectDoc, StudentProfile } from "@/types/models";
 
 const COL = {
-  users: "users",
+  students: "students",
   classes: "classes",
-  joinLinks: "joinLinks",
   members: "members",
-  userClasses: "userClasses",
   projects: "projects",
-  versions: "versions",
   publicProjects: "publicProjects",
+  activities: "activities",
 } as const;
 
-function db(): Firestore {
+/** Copy to Firestore so instructors can see all class work (students still edit via localStorage). */
+export async function syncProjectMirror(project: LocalProject) {
+  const { id, ...data } = project;
+  await setDoc(doc(db(), COL.projects, id), data);
+}
+
+/** Push every local project to Firestore (e.g. after opening the app or before instructor review). */
+export async function syncAllLocalProjectMirrors(ownerId: string) {
+  const projects = listLocalProjects(ownerId);
+  await Promise.all(projects.map((p) => syncProjectMirror(p)));
+}
+
+async function deleteProjectMirror(projectId: string) {
+  await deleteDoc(doc(db(), COL.projects, projectId));
+}
+
+function db() {
   return getDb();
 }
 
-function randJoinCode(): string {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  let s = "";
-  for (let i = 0; i < 6; i++) s += chars[Math.floor(Math.random() * chars.length)];
-  return s;
-}
-
-export async function ensureUserProfile(
-  uid: string,
-  email: string,
-  displayName: string,
-  role: UserRole,
-): Promise<void> {
-  const ref = doc(db(), COL.users, uid);
+export async function ensureDefaultClass(): Promise<ClassDoc> {
+  const ref = doc(db(), COL.classes, CLASS_ID);
   const snap = await getDoc(ref);
   if (!snap.exists()) {
-    const profile: UserProfile = {
-      displayName,
-      email,
-      role,
-      createdAt: Date.now(),
-    };
-    await setDoc(ref, profile);
+    const classDoc: ClassDoc = { name: CLASS_NAME, createdAt: Date.now() };
+    await setDoc(ref, classDoc);
+    return classDoc;
   }
+  return snap.data() as ClassDoc;
 }
 
-export async function getUserProfile(uid: string): Promise<UserProfile | null> {
-  const snap = await getDoc(doc(db(), COL.users, uid));
-  if (!snap.exists()) return null;
-  return snap.data() as UserProfile;
-}
-
-export async function updateUserProfileDisplayName(uid: string, displayName: string) {
-  const ref = doc(db(), COL.users, uid);
-  await updateDoc(ref, { displayName: displayName.trim() });
-}
-
-export async function createClass(instructorId: string, name: string) {
-  const joinCode = randJoinCode();
-  const classRef = doc(collection(db(), COL.classes));
-  const classId = classRef.id;
-  const batch = writeBatch(db());
-  const classDoc: ClassDoc = {
-    name,
-    instructorId,
-    joinCode,
-    createdAt: Date.now(),
-  };
-  batch.set(classRef, classDoc);
-  const link: JoinLinkDoc = { classId, className: name };
-  batch.set(doc(db(), COL.joinLinks, joinCode), link);
-  batch.set(doc(db(), COL.userClasses, instructorId, "items", classId), {
-    classId,
-    className: name,
-    role: "instructor" as const,
-    joinedAt: Date.now(),
-  });
-  await batch.commit();
-  return { classId, joinCode };
-}
-
-export async function joinClassWithCode(
-  userId: string,
-  displayName: string,
-  joinCodeRaw: string,
-): Promise<{ classId: string; className: string }> {
-  const code = joinCodeRaw.trim().toUpperCase();
-  const linkSnap = await getDoc(doc(db(), COL.joinLinks, code));
-  if (!linkSnap.exists()) throw new Error("Invalid join code.");
-  const link = linkSnap.data() as JoinLinkDoc;
-  const classId = link.classId;
-  const memberRef = doc(db(), COL.classes, classId, COL.members, userId);
-  const existing = await getDoc(memberRef);
-  if (existing.exists()) {
-    return { classId, className: link.className };
-  }
-  const member: ClassMember = { userId, displayName, joinedAt: Date.now() };
-  const batch = writeBatch(db());
-  batch.set(memberRef, member);
-  batch.set(doc(db(), COL.userClasses, userId, "items", classId), {
-    classId,
-    className: link.className,
-    role: "student" as const,
-    joinedAt: Date.now(),
-  });
-  await batch.commit();
-  return { classId, className: link.className };
-}
-
-/** Student leaves a class: removes enrollment and unlinks their projects from this class (projects are kept). */
-export async function leaveClass(userId: string, classId: string) {
-  const cls = await getClass(classId);
-  if (!cls) throw new Error("Class not found.");
-  if (cls.instructorId === userId) {
-    throw new Error("Use class settings to remove a class you teach.");
-  }
-  const memberRef = doc(db(), COL.classes, classId, COL.members, userId);
-  const memberSnap = await getDoc(memberRef);
-  if (!memberSnap.exists()) throw new Error("You are not enrolled in this class.");
-
-  const projSnap = await getDocs(
-    query(collection(db(), COL.projects), where("classId", "==", classId), where("ownerId", "==", userId)),
-  );
-  for (const d of projSnap.docs) {
-    await updateProject(userId, d.id, { classId: null });
-  }
-
-  const batch = writeBatch(db());
-  batch.delete(memberRef);
-  batch.delete(doc(db(), COL.userClasses, userId, "items", classId));
-  await batch.commit();
-}
-
-export type UserClassItem = {
-  id: string;
-  classId: string;
-  className: string;
-  role: "student" | "instructor";
-  joinedAt: number;
-};
-
-export async function listMyClasses(userId: string): Promise<UserClassItem[]> {
-  const q = query(collection(db(), COL.userClasses, userId, "items"), orderBy("joinedAt", "desc"));
-  const snap = await getDocs(q);
-  return snap.docs.map((d) => {
-    const data = d.data() as DocumentData;
-    return {
-      id: d.id,
-      classId: String(data.classId ?? d.id),
-      className: String(data.className ?? ""),
-      role: data.role === "instructor" ? "instructor" : "student",
-      joinedAt: typeof data.joinedAt === "number" ? data.joinedAt : 0,
-    };
-  });
-}
-
-export async function getClass(classId: string): Promise<ClassDoc | null> {
-  const snap = await getDoc(doc(db(), COL.classes, classId));
+export async function getClass(): Promise<ClassDoc | null> {
+  const snap = await getDoc(doc(db(), COL.classes, CLASS_ID));
   if (!snap.exists()) return null;
   return snap.data() as ClassDoc;
 }
 
-export async function isClassMember(classId: string, userId: string): Promise<boolean> {
-  const snap = await getDoc(doc(db(), COL.classes, classId, COL.members, userId));
-  return snap.exists();
+export async function updateStudentDisplayName(uid: string, displayName: string) {
+  const trimmed = displayName.trim();
+  const ref = doc(db(), COL.students, uid);
+  const snap = await getDoc(ref);
+  const now = Date.now();
+  if (!snap.exists()) {
+    await setDoc(ref, { displayName: trimmed, createdAt: now, lastSeenAt: now } satisfies StudentProfile);
+  } else {
+    await updateDoc(ref, { displayName: trimmed, lastSeenAt: now });
+  }
+  const memberRef = doc(db(), COL.classes, CLASS_ID, COL.members, uid);
+  const memberSnap = await getDoc(memberRef);
+  if (memberSnap.exists()) {
+    await updateDoc(memberRef, { displayName: trimmed });
+  }
+
+  const pubQ = query(collection(db(), COL.publicProjects), where("ownerId", "==", uid));
+  const pubSnap = await getDocs(pubQ);
+  await Promise.all(
+    pubSnap.docs.map((d) => updateDoc(d.ref, { ownerDisplayName: trimmed })),
+  );
 }
 
-export async function listClassMembers(classId: string): Promise<ClassMember[]> {
-  const snap = await getDocs(collection(db(), COL.classes, classId, COL.members));
+export async function ensureStudentInClass(userId: string, displayName: string) {
+  await ensureDefaultClass();
+  const now = Date.now();
+  const studentRef = doc(db(), COL.students, userId);
+  const studentSnap = await getDoc(studentRef);
+  if (!studentSnap.exists()) {
+    await setDoc(studentRef, {
+      displayName,
+      createdAt: now,
+      lastSeenAt: now,
+    } satisfies StudentProfile);
+  } else {
+    await updateDoc(studentRef, { displayName, lastSeenAt: now });
+  }
+  const memberRef = doc(db(), COL.classes, CLASS_ID, COL.members, userId);
+  const memberSnap = await getDoc(memberRef);
+  if (!memberSnap.exists()) {
+    const member: ClassMember = { userId, displayName, joinedAt: now };
+    await setDoc(memberRef, member);
+  }
+}
+
+export async function logActivity(
+  input: Pick<ActivityDoc, "userId" | "displayName" | "type" | "projectId" | "projectName">,
+) {
+  await addDoc(collection(db(), COL.activities), {
+    ...input,
+    classId: CLASS_ID,
+    createdAt: Date.now(),
+  } satisfies ActivityDoc);
+}
+
+export async function listActivities(limitN = 200): Promise<Array<{ id: string } & ActivityDoc>> {
+  const q = query(collection(db(), COL.activities), where("classId", "==", CLASS_ID));
+  const snap = await getDocs(q);
+  return snap.docs
+    .map((d) => ({ id: d.id, ...(d.data() as ActivityDoc) }))
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .slice(0, limitN);
+}
+
+export async function listClassMembers(): Promise<ClassMember[]> {
+  const snap = await getDocs(collection(db(), COL.classes, CLASS_ID, COL.members));
   return snap.docs.map((d) => d.data() as ClassMember);
 }
 
-export async function countSubmittedProjectsForStudent(classId: string, studentId: string) {
-  const q = query(
-    collection(db(), COL.projects),
-    where("classId", "==", classId),
-    where("ownerId", "==", studentId),
-  );
-  const snap = await getDocs(q);
-  return snap.size;
-}
-
-export async function deleteStudentFromClass(
-  instructorId: string,
-  classId: string,
-  studentId: string,
-) {
-  const cls = await getClass(classId);
-  if (!cls || cls.instructorId !== instructorId) throw new Error("Not allowed.");
-
-  const projSnap = await getDocs(
-    query(collection(db(), COL.projects), where("classId", "==", classId), where("ownerId", "==", studentId)),
-  );
-
-  let batch = writeBatch(db());
-  let n = 0;
-  for (const p of projSnap.docs) {
-    const vers = await getDocs(collection(db(), COL.projects, p.id, COL.versions));
-    for (const v of vers.docs) {
-      batch.delete(v.ref);
-      n++;
-      if (n >= 400) {
-        await batch.commit();
-        batch = writeBatch(db());
-        n = 0;
-      }
-    }
-    batch.delete(p.ref);
-    batch.delete(doc(db(), COL.publicProjects, p.id));
-    n += 2;
-    if (n >= 400) {
-      await batch.commit();
-      batch = writeBatch(db());
-      n = 0;
-    }
-  }
-  batch.delete(doc(db(), COL.classes, classId, COL.members, studentId));
-  batch.delete(doc(db(), COL.userClasses, studentId, "items", classId));
-  await batch.commit();
-}
-
-/** Removes the class, join link, roster enrollments, instructor link, and all class-linked projects. */
-export async function deleteClass(instructorId: string, classId: string) {
-  const cls = await getClass(classId);
-  if (!cls || cls.instructorId !== instructorId) throw new Error("Not allowed.");
-
-  const joinCode = cls.joinCode;
-
-  const projSnap = await getDocs(query(collection(db(), COL.projects), where("classId", "==", classId)));
-
-  let batch = writeBatch(db());
-  let n = 0;
-  for (const p of projSnap.docs) {
-    const vers = await getDocs(collection(db(), COL.projects, p.id, COL.versions));
-    for (const v of vers.docs) {
-      batch.delete(v.ref);
-      n++;
-      if (n >= 450) {
-        await batch.commit();
-        batch = writeBatch(db());
-        n = 0;
-      }
-    }
-    batch.delete(p.ref);
-    batch.delete(doc(db(), COL.publicProjects, p.id));
-    n += 2;
-    if (n >= 450) {
-      await batch.commit();
-      batch = writeBatch(db());
-      n = 0;
-    }
-  }
-
-  const memberSnap = await getDocs(collection(db(), COL.classes, classId, COL.members));
-  for (const m of memberSnap.docs) {
-    batch.delete(m.ref);
-    batch.delete(doc(db(), COL.userClasses, m.id, "items", classId));
-    n += 2;
-    if (n >= 450) {
-      await batch.commit();
-      batch = writeBatch(db());
-      n = 0;
-    }
-  }
-
-  batch.delete(doc(db(), COL.joinLinks, joinCode));
-  batch.delete(doc(db(), COL.userClasses, instructorId, "items", classId));
-  batch.delete(doc(db(), COL.classes, classId));
-  await batch.commit();
-}
-
-const emptyProject = (): Omit<ProjectDoc, "ownerId"> => ({
-  classId: null,
-  toolName: "",
-  gradeBand: "",
-  subject: "",
-  topic: "",
-  description: "",
-  html: "<!DOCTYPE html>\n<html>\n<head><meta charset=\"utf-8\"><title>My page</title></head>\n<body>\n  <h1>Hello</h1>\n</body>\n</html>\n",
-  isPublished: false,
-  publishedVersionId: null,
-  createdAt: Date.now(),
-  updatedAt: Date.now(),
-});
-
-export async function createProject(ownerId: string) {
-  const ref = await addDoc(collection(db(), COL.projects), {
-    ...emptyProject(),
-    ownerId,
+/** Projects live in this browser's localStorage — only the owner can read or edit them. */
+export async function createProject(ownerId: string, displayName: string): Promise<string> {
+  const id = createLocalProject(ownerId);
+  const created = getLocalProject(ownerId, id);
+  if (created) await syncProjectMirror(created);
+  await logActivity({
+    userId: ownerId,
+    displayName,
+    type: "project_created",
+    projectId: id,
+    projectName: "",
   });
-  return ref.id;
+  return id;
 }
 
-export async function getProject(projectId: string): Promise<(ProjectDoc & { id: string }) | null> {
-  const snap = await getDoc(doc(db(), COL.projects, projectId));
-  if (!snap.exists()) return null;
-  return { id: snap.id, ...(snap.data() as ProjectDoc) };
+export function getProject(ownerId: string, projectId: string): LocalProject | null {
+  return getLocalProject(ownerId, projectId);
 }
 
-export async function listMyProjects(ownerId: string) {
-  const q = query(
-    collection(db(), COL.projects),
-    where("ownerId", "==", ownerId),
-    orderBy("updatedAt", "desc"),
-  );
-  const snap = await getDocs(q);
-  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as ProjectDoc) }));
-}
-
-export async function listProjectsForClass(classId: string) {
-  const q = query(collection(db(), COL.projects), where("classId", "==", classId));
-  const snap = await getDocs(q);
-  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as ProjectDoc) }));
+export function listMyProjects(ownerId: string): LocalProject[] {
+  return listLocalProjects(ownerId);
 }
 
 export async function updateProject(
   ownerId: string,
   projectId: string,
-  patch: Partial<
-    Pick<
-      ProjectDoc,
-      | "html"
-      | "toolName"
-      | "gradeBand"
-      | "subject"
-      | "topic"
-      | "description"
-      | "classId"
-    >
-  >,
+  displayName: string,
+  patch: Partial<Pick<ProjectDoc, "html" | "toolName" | "gradeBand" | "subject" | "topic" | "description">>,
+  activityType: ActivityType = "project_saved",
 ) {
-  const p = await getProject(projectId);
-  if (!p || p.ownerId !== ownerId) throw new Error("Not allowed.");
-  const ref = doc(db(), COL.projects, projectId);
-  await updateDoc(ref, {
-    ...patch,
-    updatedAt: Date.now(),
-  });
-  if (p.isPublished) {
+  const before = getLocalProject(ownerId, projectId);
+  if (!before) throw new Error("Not allowed.");
+  const after = updateLocalProject(ownerId, projectId, patch);
+  await syncProjectMirror(after);
+
+  if (after.isPublished) {
     const pubRef = doc(db(), COL.publicProjects, projectId);
     const pubSnap = await getDoc(pubRef);
     if (pubSnap.exists()) {
-      const after = await getProject(projectId);
-      if (!after) return;
       await updateDoc(pubRef, {
         html: after.html,
         toolName: after.toolName,
@@ -372,79 +184,66 @@ export async function updateProject(
         subject: after.subject,
         topic: after.topic,
         description: after.description,
-        classId: after.classId,
+        classId: CLASS_ID,
         updatedAt: Date.now(),
       });
     }
   }
-}
 
-export async function saveVersion(
-  ownerId: string,
-  projectId: string,
-  html: string,
-  label: ProjectVersionDoc["label"],
-) {
-  const p = await getProject(projectId);
-  if (!p || p.ownerId !== ownerId) throw new Error("Not found.");
-  await addDoc(collection(db(), COL.projects, projectId, COL.versions), {
-    html,
-    label,
-    createdAt: Date.now(),
-  } satisfies ProjectVersionDoc);
-}
-
-export async function listVersions(projectId: string, ownerId: string) {
-  const p = await getProject(projectId);
-  if (!p || p.ownerId !== ownerId) return [];
-  const q = query(
-    collection(db(), COL.projects, projectId, COL.versions),
-    orderBy("createdAt", "desc"),
-    limit(50),
-  );
-  const snap = await getDocs(q);
-  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as ProjectVersionDoc) }));
-}
-
-export async function publishProject(ownerId: string, projectId: string, ownerDisplayName: string) {
-  const ref = doc(db(), COL.projects, projectId);
-  const verRef = doc(collection(db(), COL.projects, projectId, COL.versions));
-  await runTransaction(db(), async (tx) => {
-    const snap = await tx.get(ref);
-    if (!snap.exists()) throw new Error("Missing project.");
-    const data = snap.data() as ProjectDoc;
-    if (data.ownerId !== ownerId) throw new Error("Not allowed.");
-    const version: ProjectVersionDoc = { html: data.html, label: "publish", createdAt: Date.now() };
-    tx.set(verRef, version);
-    tx.update(ref, {
-      isPublished: true,
-      publishedVersionId: verRef.id,
-      updatedAt: Date.now(),
-    });
-    tx.set(doc(db(), COL.publicProjects, projectId), {
-      html: data.html,
-      toolName: data.toolName,
-      gradeBand: data.gradeBand,
-      subject: data.subject,
-      topic: data.topic,
-      description: data.description,
-      ownerId,
-      ownerDisplayName: ownerDisplayName || "Student",
-      classId: data.classId,
-      updatedAt: Date.now(),
-    });
+  await logActivity({
+    userId: ownerId,
+    displayName,
+    type: activityType,
+    projectId,
+    projectName: patch.toolName ?? before.toolName,
   });
 }
 
-export async function unpublishProject(ownerId: string, projectId: string) {
-  const ref = doc(db(), COL.projects, projectId);
-  await runTransaction(db(), async (tx) => {
-    const snap = await tx.get(ref);
-    if (!snap.exists()) throw new Error("Missing project.");
-    const data = snap.data() as ProjectDoc;
-    if (data.ownerId !== ownerId) throw new Error("Not allowed.");
-    tx.update(ref, { isPublished: false, publishedVersionId: null, updatedAt: Date.now() });
-    tx.delete(doc(db(), COL.publicProjects, projectId));
+export async function publishProject(ownerId: string, projectId: string, ownerDisplayName: string) {
+  const data = getLocalProject(ownerId, projectId);
+  if (!data || data.ownerId !== ownerId) throw new Error("Not allowed.");
+
+  await syncProjectMirror(data);
+
+  await setDoc(doc(db(), COL.publicProjects, projectId), {
+    html: data.html,
+    toolName: data.toolName,
+    gradeBand: data.gradeBand,
+    subject: data.subject,
+    topic: data.topic,
+    description: data.description,
+    ownerId,
+    ownerDisplayName: ownerDisplayName || "Student",
+    classId: CLASS_ID,
+    updatedAt: Date.now(),
+  });
+
+  const published = updateLocalProject(ownerId, projectId, { isPublished: true, publishedVersionId: projectId });
+  await syncProjectMirror(published);
+
+  await logActivity({
+    userId: ownerId,
+    displayName: ownerDisplayName,
+    type: "project_published",
+    projectId,
+    projectName: data.toolName,
+  });
+}
+
+export async function unpublishProject(ownerId: string, projectId: string, displayName: string) {
+  const data = getLocalProject(ownerId, projectId);
+  if (!data || data.ownerId !== ownerId) throw new Error("Not allowed.");
+
+  await deleteDoc(doc(db(), COL.publicProjects, projectId));
+  const draft = updateLocalProject(ownerId, projectId, { isPublished: false, publishedVersionId: null });
+  await syncProjectMirror(draft);
+
+  await logActivity({
+    userId: ownerId,
+    displayName,
+    type: "project_unpublished",
+    projectId,
+    projectName: data.toolName,
   });
 }
 
@@ -457,20 +256,30 @@ export type PublicProjectView = {
   description: string;
   ownerId?: string;
   ownerDisplayName?: string;
-  classId?: string | null;
+  classId?: string;
   updatedAt?: number;
 };
 
 export type ClassPublishedProject = PublicProjectView & { id: string };
 
-export async function listPublishedProjectsForClass(classId: string): Promise<ClassPublishedProject[]> {
+/** Gallery: all published projects from every student (Firestore). */
+export async function listPublishedProjectsForClass(): Promise<ClassPublishedProject[]> {
   const q = query(
     collection(db(), COL.publicProjects),
-    where("classId", "==", classId),
+    where("classId", "==", CLASS_ID),
     orderBy("updatedAt", "desc"),
   );
   const snap = await getDocs(q);
   return snap.docs.map((d) => ({ id: d.id, ...(d.data() as PublicProjectView) }));
+}
+
+/** Instructor: all projects synced from student browsers (drafts + published). */
+export async function listProjectsForClass(): Promise<Array<{ id: string } & ProjectDoc>> {
+  const q = query(collection(db(), COL.projects), where("classId", "==", CLASS_ID));
+  const snap = await getDocs(q);
+  return snap.docs
+    .map((d) => ({ id: d.id, ...(d.data() as ProjectDoc) }))
+    .sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 export async function getPublicProject(projectId: string): Promise<PublicProjectView | null> {
@@ -479,44 +288,28 @@ export async function getPublicProject(projectId: string): Promise<PublicProject
   return snap.data() as PublicProjectView;
 }
 
-export async function deleteProject(ownerId: string, projectId: string) {
-  const p = await getProject(projectId);
+export async function deleteProject(ownerId: string, projectId: string, displayName: string) {
+  const p = getLocalProject(ownerId, projectId);
   if (!p || p.ownerId !== ownerId) throw new Error("Not allowed.");
-  const vers = await getDocs(collection(db(), COL.projects, projectId, COL.versions));
-  let batch = writeBatch(db());
-  let n = 0;
-  for (const v of vers.docs) {
-    batch.delete(v.ref);
-    n++;
-    if (n >= 450) {
-      await batch.commit();
-      batch = writeBatch(db());
-      n = 0;
-    }
+  const toolName = p.toolName;
+
+  if (p.isPublished) {
+    await deleteDoc(doc(db(), COL.publicProjects, projectId));
   }
-  batch.delete(doc(db(), COL.projects, projectId));
-  batch.delete(doc(db(), COL.publicProjects, projectId));
-  await batch.commit();
+  await deleteProjectMirror(projectId);
+  deleteLocalProject(ownerId, projectId);
+
+  await logActivity({
+    userId: ownerId,
+    displayName,
+    type: "project_deleted",
+    projectId,
+    projectName: toolName,
+  });
 }
 
-export async function instructorDeleteProject(instructorId: string, projectId: string) {
-  const p = await getProject(projectId);
-  if (!p || !p.classId) throw new Error("Not found.");
-  const cls = await getClass(p.classId);
-  if (!cls || cls.instructorId !== instructorId) throw new Error("Not allowed.");
-  const vers = await getDocs(collection(db(), COL.projects, projectId, COL.versions));
-  let batch = writeBatch(db());
-  let n = 0;
-  for (const v of vers.docs) {
-    batch.delete(v.ref);
-    n++;
-    if (n >= 450) {
-      await batch.commit();
-      batch = writeBatch(db());
-      n = 0;
-    }
-  }
-  batch.delete(doc(db(), COL.projects, projectId));
-  batch.delete(doc(db(), COL.publicProjects, projectId));
-  await batch.commit();
+/** Removes cloud copies (student's local copy on their device is unchanged). */
+export async function instructorDeleteProject(projectId: string) {
+  await deleteDoc(doc(db(), COL.publicProjects, projectId));
+  await deleteProjectMirror(projectId);
 }

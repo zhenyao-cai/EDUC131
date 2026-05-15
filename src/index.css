@@ -176,6 +176,74 @@ select:focus-visible {
   text-decoration: underline;
 }
 
+.header-name-form {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.header-name-input {
+  width: min(12rem, 42vw);
+  padding: 0.35rem 0.5rem;
+  font-size: 0.9rem;
+}
+
+.app-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+a.app-nav-link {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.45rem 0.85rem;
+  border-radius: var(--radius);
+  font-weight: 600;
+  font-size: 0.9rem;
+  text-decoration: none;
+  color: var(--muted);
+  border: 1px solid transparent;
+  background: transparent;
+}
+
+a.app-nav-link:hover {
+  color: var(--text);
+  background: var(--surface2);
+  border-color: var(--border);
+  text-decoration: none;
+}
+
+a.app-nav-link.is-active {
+  color: var(--text);
+  background: var(--surface2);
+  border-color: var(--border);
+}
+
+a.app-nav-gallery {
+  padding: 0.6rem 1.25rem;
+  font-size: 1rem;
+  font-weight: 700;
+  color: #fff;
+  background: var(--accent);
+  border-color: transparent;
+}
+
+a.app-nav-gallery:hover {
+  color: #fff;
+  background: var(--accent-dim);
+  border-color: transparent;
+}
+
+a.app-nav-gallery.is-active {
+  color: #fff;
+  background: var(--accent-dim);
+  border-color: transparent;
+}
+
 .grade-pill-row {
   display: flex;
   flex-wrap: wrap;
