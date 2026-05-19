@@ -3,13 +3,21 @@ import { onAuthStateChanged, signInAnonymously, type Auth, type User } from "fir
 const DEFAULT_TIMEOUT_MS = 20_000;
 
 function authErrorMessage(ex: unknown): string {
-  if (ex instanceof Error) {
-    if (/timed out/i.test(ex.message)) return ex.message;
-    if (/network|failed to fetch|offline/i.test(ex.message)) {
-      return "Network error — check Wi‑Fi or cellular and try again.";
-    }
-    return ex.message;
+  const code =
+    typeof ex === "object" && ex !== null && "code" in ex ? String((ex as { code: string }).code) : "";
+  const message = ex instanceof Error ? ex.message : "";
+
+  if (code === "auth/admin-restricted-operation" || code === "auth/operation-not-allowed") {
+    return "Anonymous sign-in is disabled in Firebase. Open Firebase Console → Authentication → Sign-in method → enable Anonymous, then try again.";
   }
+  if (/admin-restricted-operation|operation-not-allowed/i.test(message)) {
+    return "Anonymous sign-in is disabled in Firebase. Open Firebase Console → Authentication → Sign-in method → enable Anonymous, then try again.";
+  }
+  if (/timed out/i.test(message)) return message;
+  if (/network|failed to fetch|offline/i.test(message)) {
+    return "Network error — check Wi‑Fi or cellular and try again.";
+  }
+  if (message) return message;
   return "Could not connect to Firebase.";
 }
 

@@ -3,6 +3,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { CLASS_NAME, INSTRUCTOR_KEY, isInstructorAccess } from "@/constants/site";
 import { useInstructorAuth } from "@/contexts/InstructorAuthContext";
 import { useToast } from "@/contexts/ToastContext";
+import { useLiveSession } from "@/hooks/useLiveSession";
 import {
   ensureDefaultClass,
   getClass,
@@ -13,6 +14,12 @@ import {
   listClassMembers,
   listProjectsForClass,
 } from "@/services/db";
+import {
+  instructorDisableDiscussion,
+  instructorDisableVoting,
+  instructorEnableDiscussion,
+  instructorEnableVoting,
+} from "@/services/liveSession";
 import type { ActivityDoc, ProjectDoc } from "@/types/models";
 
 type ProjectRow = { id: string } & ProjectDoc;
@@ -34,6 +41,7 @@ export function InstructorDashboard() {
   const { user, loading: sessionLoading, authError, firebaseReady, retryAuth } = useInstructorAuth();
   const key = searchParams.get("key");
   const allowed = isInstructorAccess(key);
+  const live = useLiveSession();
 
   const [tab, setTab] = useState<"activity" | "students" | "projects">("activity");
   const [className, setClassName] = useState(CLASS_NAME);
@@ -101,6 +109,64 @@ export function InstructorDashboard() {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function startVoting() {
+    setBusy(true);
+    try {
+      await instructorEnableVoting();
+      toast("Voting is live on gallery and project pages.", "success");
+    } catch (ex: unknown) {
+      toast(ex instanceof Error ? ex.message : "Could not start voting.", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function startDiscussion() {
+    setBusy(true);
+    try {
+      await instructorEnableDiscussion();
+      toast("Discussion is live on each project page.", "success");
+    } catch (ex: unknown) {
+      toast(ex instanceof Error ? ex.message : "Could not start discussion.", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function hideVoting() {
+    setBusy(true);
+    try {
+      await instructorDisableVoting();
+      toast("Voting hidden for students.", "success");
+    } catch (ex: unknown) {
+      toast(ex instanceof Error ? ex.message : "Could not hide voting.", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function hideDiscussion() {
+    setBusy(true);
+    try {
+      await instructorDisableDiscussion();
+      toast("Discussion hidden for students.", "success");
+    } catch (ex: unknown) {
+      toast(ex instanceof Error ? ex.message : "Could not hide discussion.", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function toggleVoting() {
+    if (live.votingEnabled) await hideVoting();
+    else await startVoting();
+  }
+
+  async function toggleDiscussion() {
+    if (live.discussionEnabled) await hideDiscussion();
+    else await startDiscussion();
   }
 
   async function removeMember(userId: string, name: string) {
@@ -180,6 +246,31 @@ export function InstructorDashboard() {
           </Link>
         </div>
       </div>
+
+      <section className="card stack">
+        <h2 style={{ margin: 0 }}>Live session</h2>
+        <p className="muted" style={{ margin: 0 }}>
+          Tap to show or hide on gallery and <code>/p/…</code> pages. Highlighted = visible to students.
+        </p>
+        <div className="class-tab-row" role="group" aria-label="Live session controls">
+          <button
+            type="button"
+            className={`class-tab${live.votingEnabled ? " is-active" : ""}`}
+            disabled={busy}
+            onClick={() => void toggleVoting()}
+          >
+            Voting
+          </button>
+          <button
+            type="button"
+            className={`class-tab${live.discussionEnabled ? " is-active" : ""}`}
+            disabled={busy}
+            onClick={() => void toggleDiscussion()}
+          >
+            Discussion
+          </button>
+        </div>
+      </section>
 
       {sessionLoading ? <p className="muted">Connecting to Firebase…</p> : null}
 

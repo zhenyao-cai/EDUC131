@@ -273,6 +273,7 @@ export async function publishProject(ownerId: string, projectId: string, ownerDi
     ownerDisplayName: ownerDisplayName || "Student",
     classId: CLASS_ID,
     updatedAt: Date.now(),
+    voteCount: 0,
   });
 
   const published = updateLocalProject(ownerId, projectId, { isPublished: true, publishedVersionId: projectId });
@@ -315,6 +316,7 @@ export type PublicProjectView = {
   ownerDisplayName?: string;
   classId?: string;
   updatedAt?: number;
+  voteCount?: number;
 };
 
 export type ClassPublishedProject = PublicProjectView & { id: string };

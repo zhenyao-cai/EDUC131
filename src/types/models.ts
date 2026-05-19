@@ -1,6 +1,29 @@
 export type ClassDoc = {
   name: string;
   createdAt: number;
+  votingEnabled?: boolean;
+  discussionEnabled?: boolean;
+  liveSessionUpdatedAt?: number;
+};
+
+export type LiveSessionState = {
+  votingEnabled: boolean;
+  discussionEnabled: boolean;
+};
+
+export type UserVotesDoc = {
+  classId: string;
+  projectIds: string[];
+  updatedAt: number;
+};
+
+export type ProjectCommentDoc = {
+  projectId: string;
+  userId: string;
+  displayName: string;
+  text: string;
+  classId: string;
+  createdAt: number;
 };
 
 export type ClassMember = {

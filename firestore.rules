@@ -13,6 +13,15 @@ service cloud.firestore {
     function projectDoc(projectId) {
       return get(/databases/$(database)/documents/projects/$(projectId)).data;
     }
+    function classDoc() {
+      return get(/databases/$(database)/documents/classes/$(singleClassId())).data;
+    }
+    function votingOn() {
+      return classDoc().votingEnabled == true;
+    }
+    function discussionOn() {
+      return classDoc().discussionEnabled == true;
+    }
 
     match /students/{studentId} {
       allow read: if authed();
@@ -39,6 +48,14 @@ service cloud.firestore {
         && request.resource.data.userId == uid()
         && request.resource.data.classId == singleClassId();
       allow update, delete: if false;
+    }
+
+    match /userVotes/{userId} {
+      allow read: if authed();
+      allow create, update: if authed()
+        && uid() == userId
+        && request.resource.data.classId == singleClassId();
+      allow delete: if authed() && uid() == userId;
     }
 
     match /projects/{projectId} {
@@ -69,13 +86,31 @@ service cloud.firestore {
     match /publicProjects/{projectId} {
       allow get: if true;
       allow list: if authed() && resource.data.classId == singleClassId();
-      allow create, update: if authed()
+      allow create: if authed()
         && projectDoc(projectId).ownerId == uid()
         && request.resource.data.classId == singleClassId();
+      allow update: if authed() && resource.data.classId == singleClassId() && (
+        (projectDoc(projectId).ownerId == uid()) ||
+        (votingOn() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['voteCount']))
+      );
       allow delete: if authed() && (
         projectDoc(projectId).ownerId == uid() ||
-        projectDoc(projectId).classId == singleClassId()
+        resource.data.classId == singleClassId()
       );
+
+      match /comments/{commentId} {
+        allow read: if true;
+        allow create: if authed()
+          && discussionOn()
+          && request.resource.data.userId == uid()
+          && request.resource.data.classId == singleClassId()
+          && request.resource.data.projectId == projectId;
+        allow delete: if authed() && (
+          resource.data.userId == uid() ||
+          resource.data.classId == singleClassId()
+        );
+        allow update: if false;
+      }
     }
   }
 }

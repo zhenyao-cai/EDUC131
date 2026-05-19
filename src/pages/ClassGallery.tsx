@@ -1,17 +1,25 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { HtmlPreview } from "@/components/HtmlPreview";
+import { GalleryVoteButton } from "@/components/GalleryVoteButton";
 import { CLASS_NAME } from "@/constants/site";
+import { useSession } from "@/contexts/SessionContext";
 import { GRADE_OPTIONS, SUBJECT_OPTIONS } from "@/constants/taxonomy";
+import { useLiveSession } from "@/hooks/useLiveSession";
 import { getClass, listClassMembers, listPublishedProjectsForClass } from "@/services/db";
+import { subscribeGalleryVoteCounts, subscribeMyVotes } from "@/services/liveSession";
 
 function uniqueSorted(values: string[]): string[] {
   return Array.from(new Set(values.filter(Boolean))).sort((a, b) => a.localeCompare(b));
 }
 
 export function ClassGallery() {
+  const { user } = useSession();
+  const live = useLiveSession();
   const [className, setClassName] = useState(CLASS_NAME);
   const [gallery, setGallery] = useState<Awaited<ReturnType<typeof listPublishedProjectsForClass>>>([]);
   const [members, setMembers] = useState<Awaited<ReturnType<typeof listClassMembers>>>([]);
+  const [voteCounts, setVoteCounts] = useState<Map<string, number>>(new Map());
+  const [myVotes, setMyVotes] = useState<Set<string>>(new Set());
   const [filterGrade, setFilterGrade] = useState("");
   const [filterSubject, setFilterSubject] = useState("");
 
@@ -25,6 +33,16 @@ export function ClassGallery() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (!live.votingEnabled) return;
+    return subscribeGalleryVoteCounts(setVoteCounts);
+  }, [live.votingEnabled]);
+
+  useEffect(() => {
+    if (!user || !live.votingEnabled) return;
+    return subscribeMyVotes(user.uid, setMyVotes);
+  }, [user, live.votingEnabled]);
 
   const ownerDisplayById = useMemo(() => {
     const m = new Map<string, string>();
@@ -57,6 +75,8 @@ export function ClassGallery() {
           <h1 style={{ margin: 0 }}>Gallery</h1>
           <p className="muted" style={{ margin: "0.35rem 0 0" }}>
             Published projects from everyone in {className}.
+            {live.votingEnabled ? " Voting is live — tap ♥ on a project or open it to vote." : null}
+            {live.discussionEnabled ? " Discussion is open on each project page." : null}
           </p>
         </div>
       </div>
@@ -107,20 +127,33 @@ export function ClassGallery() {
             {filteredGallery.map((item) => {
               const owner =
                 item.ownerDisplayName?.trim() || ownerDisplayById.get(item.ownerId ?? "")?.trim() || "Student";
+              const count = voteCounts.get(item.id) ?? item.voteCount ?? 0;
               return (
                 <article key={item.id} className="card stack" style={{ minWidth: 0 }}>
-                  <div>
-                    <strong>{item.toolName || "Untitled"}</strong>
-                    <div className="muted" style={{ fontSize: "0.85rem" }}>
-                      By {owner}
-                      {item.gradeBand ? ` · ${item.gradeBand}` : ""}
-                      {item.subject ? ` · ${item.subject}` : ""}
-                      {item.topic ? ` · ${item.topic}` : ""}
+                  <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-start", gap: "0.5rem" }}>
+                    <div style={{ minWidth: 0 }}>
+                      <strong>{item.toolName || "Untitled"}</strong>
+                      <div className="muted" style={{ fontSize: "0.85rem" }}>
+                        By {owner}
+                        {item.gradeBand ? ` · ${item.gradeBand}` : ""}
+                        {item.subject ? ` · ${item.subject}` : ""}
+                        {item.topic ? ` · ${item.topic}` : ""}
+                      </div>
                     </div>
-                    {item.description ? (
-                      <p style={{ fontSize: "0.88rem", margin: "0.45rem 0 0" }}>{item.description}</p>
+                    {live.votingEnabled ? (
+                      <GalleryVoteButton
+                        projectId={item.id}
+                        voteCount={count}
+                        voted={myVotes.has(item.id)}
+                        votesUsed={myVotes.size}
+                      />
+                    ) : count > 0 ? (
+                      <span className="vote-badge">{count}</span>
                     ) : null}
                   </div>
+                  {item.description ? (
+                    <p style={{ fontSize: "0.88rem", margin: "0.45rem 0 0" }}>{item.description}</p>
+                  ) : null}
                   <div style={{ transform: "scale(0.88)", transformOrigin: "top center" }}>
                     <HtmlPreview html={item.html} compact />
                   </div>
